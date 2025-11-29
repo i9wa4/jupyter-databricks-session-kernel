@@ -1,0 +1,66 @@
+default_stages: [pre-commit]
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-json
+      - id: check-yaml
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=no]
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+
+  - repo: local
+    hooks:
+      - id: gitleaks
+        name: gitleaks
+        entry: mise exec -- gitleaks protect --staged
+        language: system
+        pass_filenames: false
+
+      - id: actionlint
+        name: actionlint
+        entry: mise exec -- actionlint
+        language: system
+        files: ^\.github/workflows/.*\.(yml|yaml)$
+
+      - id: pinact
+        name: pinact
+        entry: mise exec -- pinact run
+        language: system
+        files: ^\.github/workflows/.*\.(yml|yaml)$
+        pass_filenames: false
+
+      - id: zizmor
+        name: zizmor
+        entry: mise exec -- zizmor
+        language: system
+        files: ^\.github/workflows/.*\.(yml|yaml)$
+
+      - id: shellcheck
+        name: shellcheck
+        entry: mise exec -- shellcheck
+        language: system
+        types: [shell]
+
+      - id: ruff-check
+        name: ruff check
+        entry: mise exec -- uv run --no-sync ruff check --fix
+        language: system
+        types: [python]
+
+      - id: ruff-format
+        name: ruff format
+        entry: mise exec -- uv run --no-sync ruff format
+        language: system
+        types: [python]
+
+      - id: mypy
+        name: mypy
+        entry: mise exec -- uv run --no-sync mypy src
+        language: system
+        types: [python]
+        pass_filenames: false
