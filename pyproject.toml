@@ -1,0 +1,43 @@
+[project]
+name = "jupyter-databricks-kernel"
+version = "0.1.0"
+description = "A Jupyter kernel for complete remote execution on Databricks clusters"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "ipykernel>=6.20.0",
+    "jupyter-client>=8.0.0",
+    "databricks-sdk>=0.30.0,<1.0.0",
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py311", "py312"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
