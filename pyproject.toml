@@ -3,7 +3,7 @@ name = "jupyter-databricks-kernel"
 version = "0.1.0"
 description = "A Jupyter kernel for complete remote execution on Databricks clusters"
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.14,<3.15"
 dependencies = [
     "ipykernel>=6.20.0",
     "jupyter-client>=8.0.0",
