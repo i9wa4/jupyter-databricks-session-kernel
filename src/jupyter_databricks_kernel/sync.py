@@ -157,10 +157,10 @@ class FileSync:
         self.config = config
         self.client: WorkspaceClient | None = None
         self.session_id = session_id
-        self.last_sync_mtime: float = 0.0
         self._synced = False
         self._user_name: str | None = None
         self._exclude_spec: pathspec.PathSpec | None = None
+        self._file_cache: FileCache | None = None
 
     def _ensure_client(self) -> WorkspaceClient:
         """Ensure the WorkspaceClient is initialized.
@@ -244,18 +244,28 @@ class FileSync:
             rel_path = rel_path + "/"
         return self._get_exclude_spec().match_file(rel_path)
 
-    def _get_latest_mtime(self) -> float:
-        """Get the latest modification time of files in source directory.
+    def _get_file_cache(self) -> FileCache:
+        """Get or create the file cache.
 
         Returns:
-            The latest mtime as a float.
+            The FileCache instance.
+        """
+        if self._file_cache is None:
+            self._file_cache = FileCache(self._get_source_path())
+        return self._file_cache
+
+    def _get_all_files(self) -> list[Path]:
+        """Get all non-excluded files in the source directory.
+
+        Returns:
+            List of file paths.
         """
         source_path = self._get_source_path()
         if not source_path.exists():
-            return 0.0
+            return []
 
-        latest_mtime = 0.0
-        for root, dirs, files in os.walk(source_path):
+        files: list[Path] = []
+        for root, dirs, filenames in os.walk(source_path):
             root_path = Path(root)
 
             # Filter out excluded directories
@@ -263,20 +273,15 @@ class FileSync:
                 d for d in dirs if not self._should_exclude(root_path / d, source_path)
             ]
 
-            for file in files:
-                file_path = root_path / file
+            for filename in filenames:
+                file_path = root_path / filename
                 if not self._should_exclude(file_path, source_path):
-                    try:
-                        mtime = file_path.stat().st_mtime
-                        if mtime > latest_mtime:
-                            latest_mtime = mtime
-                    except OSError:
-                        pass
+                    files.append(file_path)
 
-        return latest_mtime
+        return files
 
     def needs_sync(self) -> bool:
-        """Check if files need to be synchronized.
+        """Check if files need to be synchronized using hash-based detection.
 
         Returns:
             True if sync is needed.
@@ -288,9 +293,10 @@ class FileSync:
         if not self._synced:
             return True
 
-        # Check if any files have been modified
-        current_mtime = self._get_latest_mtime()
-        return current_mtime > self.last_sync_mtime
+        # Check if any files have been modified using hash comparison
+        all_files = self._get_all_files()
+        changed_files, _ = self._get_file_cache().get_changed_files(all_files)
+        return len(changed_files) > 0
 
     def _create_zip(self) -> bytes:
         """Create a zip archive of the source directory.
@@ -337,8 +343,11 @@ class FileSync:
         with client.dbfs.open(dbfs_zip_path, write=True, overwrite=True) as f:
             f.write(zip_data)
 
-        # Update sync state
-        self.last_sync_mtime = self._get_latest_mtime()
+        # Update sync state and file cache
+        all_files = self._get_all_files()
+        file_cache = self._get_file_cache()
+        file_cache.update(all_files)
+        file_cache.save()
         self._synced = True
 
         return dbfs_zip_path
