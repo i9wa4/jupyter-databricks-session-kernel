@@ -178,6 +178,25 @@ class TestExecuteWithReconnect:
         mock_reconnect.assert_not_called()
         assert result.status == "error"
 
+    def test_execute_returns_error_when_retry_also_fails(
+        self, executor: DatabricksExecutor
+    ) -> None:
+        """Test that execution returns error when retry after reconnect also fails."""
+        executor.context_id = "test-context"
+
+        with patch.object(executor, "_execute_internal") as mock_exec:
+            # Both calls fail with context error
+            mock_exec.side_effect = [
+                Exception("Context not found"),
+                Exception("Context still not found after reconnect"),
+            ]
+            with patch.object(executor, "reconnect"):
+                result = executor.execute("print(1)")
+
+        assert result.status == "error"
+        assert "Reconnection failed" in (result.error or "")
+        assert result.reconnected is False
+
 
 class TestExecutionResult:
     """Tests for ExecutionResult dataclass."""
