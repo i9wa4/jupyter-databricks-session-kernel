@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
@@ -156,8 +156,7 @@ class DatabricksExecutor:
                     time.sleep(RECONNECT_DELAY_SECONDS)
                     self.reconnect()
                     result = self._execute_internal(code)
-                    result.reconnected = True
-                    return result
+                    return replace(result, reconnected=True)
                 except Exception as retry_error:
                     logger.error("Reconnection failed: %s", retry_error)
                     return ExecutionResult(
