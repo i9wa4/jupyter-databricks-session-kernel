@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -13,6 +14,9 @@ if TYPE_CHECKING:
     from .config import Config
 
 logger = logging.getLogger(__name__)
+
+# Retry configuration
+RECONNECT_DELAY_SECONDS = 1.0  # Delay before reconnection attempt
 
 
 @dataclass
@@ -143,6 +147,8 @@ class DatabricksExecutor:
             if allow_reconnect and self._is_context_invalid_error(e):
                 logger.warning("Context invalid, attempting reconnection: %s", e)
                 try:
+                    # Wait before reconnection to avoid hammering the API
+                    time.sleep(RECONNECT_DELAY_SECONDS)
                     self.reconnect()
                     result = self._execute_internal(code)
                     result.reconnected = True
