@@ -2,18 +2,146 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
+import logging
 import os
 import re
 import zipfile
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pathspec
 from databricks.sdk import WorkspaceClient
 
 if TYPE_CHECKING:
     from .config import Config
+
+logger = logging.getLogger(__name__)
+
+CACHE_FILE_NAME = ".databricks-kernel-cache.json"
+CACHE_VERSION = 1
+
+
+@dataclass
+class SyncStats:
+    """Statistics for file synchronization."""
+
+    changed_files: int = 0
+    changed_size: int = 0
+    skipped_files: int = 0
+    total_files: int = 0
+
+
+@dataclass
+class FileCache:
+    """MD5 hash-based file cache for change detection."""
+
+    source_path: Path
+    _cache: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Load cache from file after initialization."""
+        self._load()
+
+    @property
+    def cache_path(self) -> Path:
+        """Get the cache file path."""
+        return self.source_path / CACHE_FILE_NAME
+
+    def _load(self) -> None:
+        """Load cache from file. Falls back to empty cache on error."""
+        if not self.cache_path.exists():
+            return
+
+        try:
+            with open(self.cache_path) as f:
+                data: dict[str, Any] = json.load(f)
+
+            # Validate version
+            if data.get("version") != CACHE_VERSION:
+                logger.warning("Cache version mismatch, resetting cache")
+                self._cache = {}
+                return
+
+            self._cache = data.get("files", {})
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Failed to load cache, resetting: %s", e)
+            self._cache = {}
+
+    def save(self) -> None:
+        """Save cache to file."""
+        try:
+            data = {
+                "version": CACHE_VERSION,
+                "files": self._cache,
+            }
+            with open(self.cache_path, "w") as f:
+                json.dump(data, f, indent=2)
+        except OSError as e:
+            logger.warning("Failed to save cache: %s", e)
+
+    @staticmethod
+    def compute_hash(file_path: Path) -> str:
+        """Compute MD5 hash of a file.
+
+        Args:
+            file_path: Path to the file.
+
+        Returns:
+            MD5 hash as hexadecimal string.
+        """
+        return hashlib.md5(file_path.read_bytes()).hexdigest()
+
+    def get_changed_files(self, files: list[Path]) -> tuple[list[Path], SyncStats]:
+        """Get list of changed files and sync statistics.
+
+        Args:
+            files: List of file paths to check.
+
+        Returns:
+            Tuple of (changed files list, sync statistics).
+        """
+        changed: list[Path] = []
+        stats = SyncStats(total_files=len(files))
+
+        for file_path in files:
+            try:
+                rel_path = str(file_path.relative_to(self.source_path))
+                current_hash = self.compute_hash(file_path)
+                cached_hash = self._cache.get(rel_path)
+
+                if current_hash != cached_hash:
+                    changed.append(file_path)
+                    stats.changed_files += 1
+                    stats.changed_size += file_path.stat().st_size
+                else:
+                    stats.skipped_files += 1
+            except OSError:
+                # File read error, treat as changed
+                changed.append(file_path)
+                stats.changed_files += 1
+
+        return changed, stats
+
+    def update(self, files: list[Path]) -> None:
+        """Update cache with current file hashes.
+
+        Args:
+            files: List of file paths to update.
+        """
+        for file_path in files:
+            try:
+                rel_path = str(file_path.relative_to(self.source_path))
+                self._cache[rel_path] = self.compute_hash(file_path)
+            except OSError:
+                pass  # Skip files that can't be read
+
+    def clear(self) -> None:
+        """Clear the cache."""
+        self._cache = {}
 
 
 class FileSync:

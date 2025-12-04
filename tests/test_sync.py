@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from jupyter_databricks_kernel.sync import FileSync
+from jupyter_databricks_kernel.sync import CACHE_FILE_NAME, FileCache, FileSync
 
 
 @pytest.fixture
@@ -174,3 +175,134 @@ class TestShouldExclude:
         py_file = tmp_path / "main.py"
         py_file.touch()
         assert file_sync._should_exclude(py_file, tmp_path) is False
+
+
+class TestFileCache:
+    """Tests for FileCache class."""
+
+    def test_compute_hash(self, tmp_path: Path) -> None:
+        """Test MD5 hash computation."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello world")
+        cache = FileCache(tmp_path)
+        hash_value = cache.compute_hash(test_file)
+        # MD5 of "hello world" is 5eb63bbbe01eeed093cb22bb8f5acdc3
+        assert hash_value == "5eb63bbbe01eeed093cb22bb8f5acdc3"
+
+    def test_get_changed_files_all_new(self, tmp_path: Path) -> None:
+        """Test that all files are marked as changed when cache is empty."""
+        file1 = tmp_path / "file1.py"
+        file2 = tmp_path / "file2.py"
+        file1.write_text("content1")
+        file2.write_text("content2")
+
+        cache = FileCache(tmp_path)
+        changed, stats = cache.get_changed_files([file1, file2])
+
+        assert len(changed) == 2
+        assert stats.changed_files == 2
+        assert stats.skipped_files == 0
+        assert stats.total_files == 2
+
+    def test_get_changed_files_with_cache(self, tmp_path: Path) -> None:
+        """Test that unchanged files are skipped."""
+        file1 = tmp_path / "file1.py"
+        file2 = tmp_path / "file2.py"
+        file1.write_text("content1")
+        file2.write_text("content2")
+
+        cache = FileCache(tmp_path)
+        cache.update([file1, file2])
+
+        # Modify only file1
+        file1.write_text("modified content")
+
+        changed, stats = cache.get_changed_files([file1, file2])
+
+        assert len(changed) == 1
+        assert file1 in changed
+        assert file2 not in changed
+        assert stats.changed_files == 1
+        assert stats.skipped_files == 1
+
+    def test_save_and_load_cache(self, tmp_path: Path) -> None:
+        """Test cache persistence."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        # Create and save cache
+        cache1 = FileCache(tmp_path)
+        cache1.update([file1])
+        cache1.save()
+
+        # Verify cache file exists
+        cache_file = tmp_path / CACHE_FILE_NAME
+        assert cache_file.exists()
+
+        # Load cache in new instance
+        cache2 = FileCache(tmp_path)
+        changed, stats = cache2.get_changed_files([file1])
+
+        # File should not be changed
+        assert len(changed) == 0
+        assert stats.skipped_files == 1
+
+    def test_cache_version_mismatch(self, tmp_path: Path) -> None:
+        """Test that cache is reset on version mismatch."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        # Create cache file with wrong version
+        cache_file = tmp_path / CACHE_FILE_NAME
+        cache_file.write_text(
+            json.dumps({"version": 999, "files": {"file1.py": "abc"}})
+        )
+
+        cache = FileCache(tmp_path)
+        changed, stats = cache.get_changed_files([file1])
+
+        # File should be marked as changed due to version mismatch
+        assert len(changed) == 1
+
+    def test_cache_corruption_fallback(self, tmp_path: Path) -> None:
+        """Test that corrupted cache falls back to empty."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        # Create corrupted cache file
+        cache_file = tmp_path / CACHE_FILE_NAME
+        cache_file.write_text("not valid json {{{")
+
+        cache = FileCache(tmp_path)
+        changed, stats = cache.get_changed_files([file1])
+
+        # File should be marked as changed due to corrupted cache
+        assert len(changed) == 1
+
+    def test_clear_cache(self, tmp_path: Path) -> None:
+        """Test cache clearing."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        cache = FileCache(tmp_path)
+        cache.update([file1])
+
+        # Verify file is cached
+        changed, _ = cache.get_changed_files([file1])
+        assert len(changed) == 0
+
+        # Clear and verify
+        cache.clear()
+        changed, _ = cache.get_changed_files([file1])
+        assert len(changed) == 1
+
+    def test_changed_size_tracking(self, tmp_path: Path) -> None:
+        """Test that changed file sizes are tracked."""
+        file1 = tmp_path / "file1.py"
+        content = "x" * 100
+        file1.write_text(content)
+
+        cache = FileCache(tmp_path)
+        changed, stats = cache.get_changed_files([file1])
+
+        assert stats.changed_size == 100
