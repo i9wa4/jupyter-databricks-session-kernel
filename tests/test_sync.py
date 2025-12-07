@@ -349,6 +349,35 @@ class TestFileCache:
 
         assert cache.has_any_changed([file1]) is True
 
+    def test_has_any_changed_returns_true_on_read_error(self, tmp_path: Path) -> None:
+        """Test that has_any_changed returns True when file cannot be read."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        cache = FileCache(tmp_path)
+        cache.update([file1])
+
+        # Delete file to cause read error
+        file1.unlink()
+
+        # Read error should be treated as changed
+        assert cache.has_any_changed([file1]) is True
+
+    def test_update_reuses_computed_hashes(self, tmp_path: Path) -> None:
+        """Test that update() reuses pre-computed hashes instead of recomputing."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        cache = FileCache(tmp_path)
+        _, _, computed_hashes = cache.get_changed_files([file1])
+
+        # Pass computed_hashes to update
+        cache.update([file1], computed_hashes)
+
+        # Verify cache contains the correct hash
+        rel_path = "file1.py"
+        assert cache._cache[rel_path] == computed_hashes[rel_path]
+
 
 class TestValidateSizes:
     """Tests for file size validation."""
