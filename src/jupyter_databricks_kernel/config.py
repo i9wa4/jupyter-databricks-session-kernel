@@ -12,19 +12,16 @@ import yaml
 
 @dataclass
 class SyncConfig:
-    """Configuration for file synchronization."""
+    """Configuration for file synchronization.
+
+    The sync module applies default exclusion patterns automatically,
+    including .gitignore rules. User-specified exclude patterns here
+    are applied in addition to those defaults.
+    """
 
     enabled: bool = True
     source: str = "."
-    exclude: list[str] = field(
-        default_factory=lambda: [
-            ".git",
-            "__pycache__",
-            ".venv",
-            "*.pyc",
-            ".pytest_cache",
-        ]
-    )
+    exclude: list[str] = field(default_factory=list)
     max_size_mb: float | None = None
     max_file_size_mb: float | None = None
 
@@ -92,6 +89,10 @@ class Config:
     def validate(self) -> list[str]:
         """Validate the configuration.
 
+        Note: Authentication is handled by the Databricks SDK, which
+        automatically resolves credentials from environment variables,
+        CLI config, or cloud provider authentication.
+
         Returns:
             List of validation error messages. Empty if valid.
         """
@@ -101,19 +102,6 @@ class Config:
             errors.append(
                 "DATABRICKS_CLUSTER_ID environment variable is not set. "
                 "Please set it to your Databricks cluster ID."
-            )
-
-        # Check for DATABRICKS_HOST and DATABRICKS_TOKEN
-        if not os.environ.get("DATABRICKS_HOST"):
-            errors.append(
-                "DATABRICKS_HOST environment variable is not set. "
-                "Please set it to your Databricks workspace URL."
-            )
-
-        if not os.environ.get("DATABRICKS_TOKEN"):
-            errors.append(
-                "DATABRICKS_TOKEN environment variable is not set. "
-                "Please set it to your Databricks personal access token."
             )
 
         return errors

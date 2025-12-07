@@ -1,4 +1,8 @@
-"""File synchronization to Databricks DBFS."""
+"""File synchronization to Databricks DBFS.
+
+This module implements file synchronization matching Databricks CLI behavior.
+It respects .gitignore files and always excludes the .databricks directory.
+"""
 
 from __future__ import annotations
 
@@ -24,6 +28,12 @@ logger = logging.getLogger(__name__)
 
 CACHE_FILE_NAME = ".databricks-kernel-cache.json"
 CACHE_VERSION = 1
+
+# Default patterns that are always excluded, matching Databricks CLI behavior.
+# See: https://github.com/databricks/cli/blob/main/libs/git/view.go
+DEFAULT_EXCLUDE_PATTERNS = [
+    ".databricks",
+]
 
 
 class FileSizeError(Exception):
@@ -155,7 +165,17 @@ class FileCache:
 
 
 class FileSync:
-    """Synchronizes local files to Databricks DBFS."""
+    """Synchronizes local files to Databricks DBFS.
+
+    This class implements file synchronization matching Databricks CLI behavior:
+    - Respects .gitignore files in the source directory
+    - Always excludes .databricks directory
+
+    The exclusion logic follows this priority:
+    1. .databricks directory (always excluded)
+    2. .gitignore patterns (if present)
+    3. User-configured exclude patterns from config file
+    """
 
     def __init__(self, config: Config, session_id: str) -> None:
         """Initialize file sync.
@@ -169,7 +189,8 @@ class FileSync:
         self.session_id = session_id
         self._synced = False
         self._user_name: str | None = None
-        self._exclude_spec: pathspec.PathSpec | None = None
+        self._pathspec: pathspec.PathSpec | None = None
+        self._pathspec_mtime: float = 0.0
         self._file_cache: FileCache | None = None
 
     def _ensure_client(self) -> WorkspaceClient:
@@ -226,20 +247,64 @@ class FileSync:
             source = source[2:]
         return Path.cwd() / source
 
-    def _get_exclude_spec(self) -> pathspec.PathSpec:
-        """Get the compiled pathspec for exclude patterns.
+    def _load_gitignore_spec(self, source_path: Path) -> pathspec.PathSpec:
+        """Load and cache the combined PathSpec from .gitignore and default patterns.
+
+        This method combines patterns from:
+        1. DEFAULT_EXCLUDE_PATTERNS (always applied)
+        2. .gitignore file (if present)
+        3. User-configured exclude patterns
+
+        Args:
+            source_path: The source directory path.
 
         Returns:
-            Compiled PathSpec for matching exclude patterns.
+            A PathSpec object for matching files to exclude.
         """
-        if self._exclude_spec is None:
-            self._exclude_spec = pathspec.PathSpec.from_lines(
-                "gitwildmatch", self.config.sync.exclude
-            )
-        return self._exclude_spec
+        gitignore_path = source_path / ".gitignore"
+        gitignore_mtime = 0.0
+
+        if gitignore_path.exists():
+            try:
+                gitignore_mtime = gitignore_path.stat().st_mtime
+            except OSError:
+                pass
+
+        # Return cached spec if .gitignore hasn't changed
+        if self._pathspec is not None and gitignore_mtime == self._pathspec_mtime:
+            return self._pathspec
+
+        # Combine all patterns
+        all_patterns: list[str] = []
+
+        # Add default patterns
+        all_patterns.extend(DEFAULT_EXCLUDE_PATTERNS)
+
+        # Add .gitignore patterns if file exists
+        if gitignore_path.exists():
+            try:
+                with open(gitignore_path) as f:
+                    for line in f:
+                        line = line.strip()
+                        # Skip empty lines and comments
+                        if line and not line.startswith("#"):
+                            all_patterns.append(line)
+            except OSError:
+                pass  # Ignore read errors
+
+        # Add user-configured patterns
+        all_patterns.extend(self.config.sync.exclude)
+
+        # Create and cache the PathSpec
+        self._pathspec = pathspec.PathSpec.from_lines("gitwildmatch", all_patterns)
+        self._pathspec_mtime = gitignore_mtime
+
+        return self._pathspec
 
     def _should_exclude(self, path: Path, base_path: Path) -> bool:
         """Check if a path should be excluded from sync.
+
+        Uses gitignore-style pattern matching, similar to Databricks CLI.
 
         Args:
             path: Path to check.
@@ -248,11 +313,14 @@ class FileSync:
         Returns:
             True if the path should be excluded.
         """
+        spec = self._load_gitignore_spec(base_path)
         rel_path = str(path.relative_to(base_path))
-        # Add trailing slash for directories to match directory patterns
+
+        # For directories, also check with trailing slash (gitignore convention)
         if path.is_dir():
-            rel_path = rel_path + "/"
-        return self._get_exclude_spec().match_file(rel_path)
+            return spec.match_file(rel_path) or spec.match_file(rel_path + "/")
+
+        return spec.match_file(rel_path)
 
     def _get_file_cache(self) -> FileCache:
         """Get or create the file cache.
