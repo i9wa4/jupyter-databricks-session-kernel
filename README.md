@@ -110,10 +110,9 @@ Example configuration:
 sync:
   max_size_mb: 100.0
   max_file_size_mb: 10.0
-  exclude:
-    - "*.log"
-    - "data/"
 ```
+
+If the size limit is exceeded, a `FileSizeError` is raised before syncing starts. The error message indicates which file or total size exceeded the limit, allowing you to adjust `exclude` patterns or increase the limit.
 
 ## 6. Development
 
