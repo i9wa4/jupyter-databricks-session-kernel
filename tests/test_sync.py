@@ -10,6 +10,7 @@ import pytest
 
 from jupyter_databricks_kernel.sync import (
     CACHE_FILE_NAME,
+    DEFAULT_EXCLUDE_PATTERNS,
     FileCache,
     FileSizeError,
     FileSync,
@@ -437,3 +438,80 @@ class TestSyncStats:
         assert stats.total_files == 13
         assert stats.sync_duration == 1.5
         assert stats.dbfs_path == "/tmp/test/project.zip"
+
+
+class TestDefaultExcludePatterns:
+    """Tests for default exclude patterns matching Databricks CLI."""
+
+    def test_contains_only_databricks_directory(self) -> None:
+        """Test that only .databricks is excluded (matching Databricks CLI)."""
+        assert DEFAULT_EXCLUDE_PATTERNS == [".databricks"]
+
+
+class TestGitignorePatternMatching:
+    """Tests for .gitignore-based pattern matching."""
+
+    def test_excludes_databricks_directory(
+        self, file_sync: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that .databricks directory is always excluded."""
+        databricks_dir = tmp_path / ".databricks"
+        databricks_dir.mkdir()
+
+        assert file_sync._should_exclude(databricks_dir, tmp_path) is True
+
+    def test_includes_normal_python_files(
+        self, file_sync: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that normal Python files are not excluded."""
+        py_file = tmp_path / "main.py"
+        py_file.touch()
+
+        assert file_sync._should_exclude(py_file, tmp_path) is False
+
+    def test_respects_gitignore(self, file_sync: FileSync, tmp_path: Path) -> None:
+        """Test that .gitignore patterns are respected."""
+        # Create a .gitignore file
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text("*.log\ndata/\n.env\n")
+
+        # Create files
+        log_file = tmp_path / "app.log"
+        log_file.touch()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        env_file = tmp_path / ".env"
+        env_file.touch()
+
+        # Force reload of gitignore
+        file_sync._pathspec = None
+
+        assert file_sync._should_exclude(log_file, tmp_path) is True
+        assert file_sync._should_exclude(data_dir, tmp_path) is True
+        assert file_sync._should_exclude(env_file, tmp_path) is True
+
+    def test_does_not_exclude_without_gitignore(
+        self, file_sync: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that files are included if not in .gitignore."""
+        # No .gitignore file
+        env_file = tmp_path / ".env"
+        env_file.touch()
+
+        # Force reload
+        file_sync._pathspec = None
+
+        # .env is NOT excluded without .gitignore (matching Databricks CLI)
+        assert file_sync._should_exclude(env_file, tmp_path) is False
+
+    def test_user_exclude_patterns_applied(
+        self, mock_config: MagicMock, tmp_path: Path
+    ) -> None:
+        """Test that user-configured exclude patterns are applied."""
+        mock_config.sync.exclude = ["*.txt", "temp/"]
+        file_sync = FileSync(mock_config, "test-session")
+
+        txt_file = tmp_path / "notes.txt"
+        txt_file.touch()
+
+        assert file_sync._should_exclude(txt_file, tmp_path) is True
