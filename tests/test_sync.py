@@ -25,6 +25,7 @@ def mock_config() -> MagicMock:
     config.sync.enabled = True
     config.sync.source = "./src"
     config.sync.exclude = []
+    config.sync.use_gitignore = False
     return config
 
 
@@ -204,12 +205,13 @@ class TestFileCache:
         file2.write_text("content2")
 
         cache = FileCache(tmp_path)
-        changed, stats = cache.get_changed_files([file1, file2])
+        changed, stats, computed_hashes = cache.get_changed_files([file1, file2])
 
         assert len(changed) == 2
         assert stats.changed_files == 2
         assert stats.skipped_files == 0
         assert stats.total_files == 2
+        assert len(computed_hashes) == 2
 
     def test_get_changed_files_with_cache(self, tmp_path: Path) -> None:
         """Test that unchanged files are skipped."""
@@ -224,13 +226,14 @@ class TestFileCache:
         # Modify only file1
         file1.write_text("modified content")
 
-        changed, stats = cache.get_changed_files([file1, file2])
+        changed, stats, computed_hashes = cache.get_changed_files([file1, file2])
 
         assert len(changed) == 1
         assert file1 in changed
         assert file2 not in changed
         assert stats.changed_files == 1
         assert stats.skipped_files == 1
+        assert len(computed_hashes) == 2
 
     def test_save_and_load_cache(self, tmp_path: Path) -> None:
         """Test cache persistence."""
@@ -248,7 +251,7 @@ class TestFileCache:
 
         # Load cache in new instance
         cache2 = FileCache(tmp_path)
-        changed, stats = cache2.get_changed_files([file1])
+        changed, stats, _ = cache2.get_changed_files([file1])
 
         # File should not be changed
         assert len(changed) == 0
@@ -266,7 +269,7 @@ class TestFileCache:
         )
 
         cache = FileCache(tmp_path)
-        changed, stats = cache.get_changed_files([file1])
+        changed, stats, _ = cache.get_changed_files([file1])
 
         # File should be marked as changed due to version mismatch
         assert len(changed) == 1
@@ -281,7 +284,7 @@ class TestFileCache:
         cache_file.write_text("not valid json {{{")
 
         cache = FileCache(tmp_path)
-        changed, stats = cache.get_changed_files([file1])
+        changed, stats, _ = cache.get_changed_files([file1])
 
         # File should be marked as changed due to corrupted cache
         assert len(changed) == 1
@@ -295,12 +298,12 @@ class TestFileCache:
         cache.update([file1])
 
         # Verify file is cached
-        changed, _ = cache.get_changed_files([file1])
+        changed, _, _ = cache.get_changed_files([file1])
         assert len(changed) == 0
 
         # Clear and verify
         cache.clear()
-        changed, _ = cache.get_changed_files([file1])
+        changed, _, _ = cache.get_changed_files([file1])
         assert len(changed) == 1
 
     def test_changed_size_tracking(self, tmp_path: Path) -> None:
@@ -310,9 +313,71 @@ class TestFileCache:
         file1.write_text(content)
 
         cache = FileCache(tmp_path)
-        changed, stats = cache.get_changed_files([file1])
+        changed, stats, _ = cache.get_changed_files([file1])
 
         assert stats.changed_size == 100
+
+    def test_has_any_changed_returns_true_on_change(self, tmp_path: Path) -> None:
+        """Test that has_any_changed returns True when file is modified."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        cache = FileCache(tmp_path)
+        cache.update([file1])
+
+        # Modify the file
+        file1.write_text("modified content")
+
+        assert cache.has_any_changed([file1]) is True
+
+    def test_has_any_changed_returns_false_when_unchanged(self, tmp_path: Path) -> None:
+        """Test that has_any_changed returns False when no changes."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        cache = FileCache(tmp_path)
+        cache.update([file1])
+
+        assert cache.has_any_changed([file1]) is False
+
+    def test_has_any_changed_returns_true_for_new_file(self, tmp_path: Path) -> None:
+        """Test that has_any_changed returns True for uncached files."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        cache = FileCache(tmp_path)
+        # Don't update cache - file is new
+
+        assert cache.has_any_changed([file1]) is True
+
+    def test_has_any_changed_returns_true_on_read_error(self, tmp_path: Path) -> None:
+        """Test that has_any_changed returns True when file cannot be read."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        cache = FileCache(tmp_path)
+        cache.update([file1])
+
+        # Delete file to cause read error
+        file1.unlink()
+
+        # Read error should be treated as changed
+        assert cache.has_any_changed([file1]) is True
+
+    def test_update_reuses_computed_hashes(self, tmp_path: Path) -> None:
+        """Test that update() reuses pre-computed hashes instead of recomputing."""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("content")
+
+        cache = FileCache(tmp_path)
+        _, _, computed_hashes = cache.get_changed_files([file1])
+
+        # Pass computed_hashes to update
+        cache.update([file1], computed_hashes)
+
+        # Verify cache contains the correct hash
+        rel_path = "file1.py"
+        assert cache._cache[rel_path] == computed_hashes[rel_path]
 
 
 class TestValidateSizes:
@@ -452,6 +517,26 @@ class TestDefaultExcludePatterns:
 class TestGitignorePatternMatching:
     """Tests for .gitignore-based pattern matching."""
 
+    @pytest.fixture
+    def file_sync_with_gitignore(self, tmp_path: Path) -> FileSync:
+        """Create a FileSync instance with use_gitignore enabled."""
+        config = MagicMock()
+        config.sync.enabled = True
+        config.sync.source = str(tmp_path)
+        config.sync.exclude = []
+        config.sync.use_gitignore = True
+        return FileSync(config, "test-session")
+
+    @pytest.fixture
+    def file_sync_without_gitignore(self, tmp_path: Path) -> FileSync:
+        """Create a FileSync instance with use_gitignore disabled."""
+        config = MagicMock()
+        config.sync.enabled = True
+        config.sync.source = str(tmp_path)
+        config.sync.exclude = []
+        config.sync.use_gitignore = False
+        return FileSync(config, "test-session")
+
     def test_excludes_databricks_directory(
         self, file_sync: FileSync, tmp_path: Path
     ) -> None:
@@ -470,8 +555,10 @@ class TestGitignorePatternMatching:
 
         assert file_sync._should_exclude(py_file, tmp_path) is False
 
-    def test_respects_gitignore(self, file_sync: FileSync, tmp_path: Path) -> None:
-        """Test that .gitignore patterns are respected."""
+    def test_respects_gitignore(
+        self, file_sync_with_gitignore: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that .gitignore patterns are respected when use_gitignore is True."""
         # Create a .gitignore file
         gitignore = tmp_path / ".gitignore"
         gitignore.write_text("*.log\ndata/\n.env\n")
@@ -485,25 +572,25 @@ class TestGitignorePatternMatching:
         env_file.touch()
 
         # Force reload of gitignore
-        file_sync._pathspec = None
+        file_sync_with_gitignore._pathspec = None
 
-        assert file_sync._should_exclude(log_file, tmp_path) is True
-        assert file_sync._should_exclude(data_dir, tmp_path) is True
-        assert file_sync._should_exclude(env_file, tmp_path) is True
+        assert file_sync_with_gitignore._should_exclude(log_file, tmp_path) is True
+        assert file_sync_with_gitignore._should_exclude(data_dir, tmp_path) is True
+        assert file_sync_with_gitignore._should_exclude(env_file, tmp_path) is True
 
     def test_does_not_exclude_without_gitignore(
-        self, file_sync: FileSync, tmp_path: Path
+        self, file_sync_with_gitignore: FileSync, tmp_path: Path
     ) -> None:
-        """Test that files are included if not in .gitignore."""
+        """Test that files are included if .gitignore file doesn't exist."""
         # No .gitignore file
         env_file = tmp_path / ".env"
         env_file.touch()
 
         # Force reload
-        file_sync._pathspec = None
+        file_sync_with_gitignore._pathspec = None
 
-        # .env is NOT excluded without .gitignore (matching Databricks CLI)
-        assert file_sync._should_exclude(env_file, tmp_path) is False
+        # .env is NOT excluded without .gitignore file
+        assert file_sync_with_gitignore._should_exclude(env_file, tmp_path) is False
 
     def test_user_exclude_patterns_applied(
         self, mock_config: MagicMock, tmp_path: Path
@@ -516,6 +603,37 @@ class TestGitignorePatternMatching:
         txt_file.touch()
 
         assert file_sync._should_exclude(txt_file, tmp_path) is True
+
+    def test_ignores_gitignore_when_disabled(
+        self, file_sync_without_gitignore: FileSync, tmp_path: Path
+    ) -> None:
+        """Test that .gitignore patterns are ignored when use_gitignore is False."""
+        # Create a .gitignore file
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text("*.log\ndata/\n.env\n")
+
+        # Create files that would be excluded by .gitignore
+        log_file = tmp_path / "app.log"
+        log_file.touch()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        env_file = tmp_path / ".env"
+        env_file.touch()
+
+        # Force reload
+        file_sync_without_gitignore._pathspec = None
+
+        # These files should NOT be excluded because use_gitignore is False
+        assert file_sync_without_gitignore._should_exclude(log_file, tmp_path) is False
+        assert file_sync_without_gitignore._should_exclude(data_dir, tmp_path) is False
+        assert file_sync_without_gitignore._should_exclude(env_file, tmp_path) is False
+
+    def test_use_gitignore_default_is_true(self, tmp_path: Path) -> None:
+        """Test that use_gitignore defaults to True."""
+        from jupyter_databricks_kernel.config import Config
+
+        config = Config()
+        assert config.sync.use_gitignore is True
 
 
 class TestFileDeletion:
@@ -556,7 +674,7 @@ class TestFileDeletion:
         cache.remove("file1.py")
 
         # File should now be detected as changed (not in cache)
-        changed, _ = cache.get_changed_files([file1])
+        changed, _, _ = cache.get_changed_files([file1])
         assert file1 in changed
 
     def test_get_deleted_files_multiple_deletions(self, tmp_path: Path) -> None:
@@ -634,3 +752,78 @@ class TestNeedsSyncIntegration:
 
         # Should detect modification and return True
         assert file_sync.needs_sync() is True
+
+
+class TestSkipNonRegularFiles:
+    """Tests for skipping non-regular files (sockets, FIFOs, etc.)."""
+
+    def test_get_all_files_skips_socket_files(self, mock_config: MagicMock) -> None:
+        """Test that _get_all_files skips socket files."""
+        import shutil
+        import socket
+        import tempfile
+
+        # Use /tmp directly to avoid AF_UNIX path length limit on macOS
+        test_dir = Path(tempfile.mkdtemp(prefix="sync_test_"))
+        try:
+            mock_config.sync.source = str(test_dir)
+            mock_config.sync.exclude = []
+            file_sync = FileSync(mock_config, "test-session")
+
+            # Create a regular file
+            regular_file = test_dir / "regular.py"
+            regular_file.write_text("print('hello')")
+
+            # Create a Unix socket file
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock_path = test_dir / "test.sock"
+            sock.bind(str(sock_path))
+            try:
+                # Get all files - socket should be skipped
+                files = file_sync._get_all_files()
+
+                assert regular_file in files
+                assert sock_path not in files
+                assert len(files) == 1
+            finally:
+                sock.close()
+        finally:
+            shutil.rmtree(test_dir, ignore_errors=True)
+
+    def test_create_zip_skips_socket_files(self, mock_config: MagicMock) -> None:
+        """Test that _create_zip skips socket files without error."""
+        import io
+        import shutil
+        import socket
+        import tempfile
+        import zipfile
+
+        # Use /tmp directly to avoid AF_UNIX path length limit on macOS
+        test_dir = Path(tempfile.mkdtemp(prefix="sync_test_"))
+        try:
+            mock_config.sync.source = str(test_dir)
+            mock_config.sync.exclude = []
+            file_sync = FileSync(mock_config, "test-session")
+
+            # Create a regular file
+            regular_file = test_dir / "regular.py"
+            regular_file.write_text("print('hello')")
+
+            # Create a Unix socket file
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock_path = test_dir / "test.sock"
+            sock.bind(str(sock_path))
+            try:
+                # Create zip - should not raise error
+                zip_data = file_sync._create_zip()
+
+                # Verify zip contains only regular file
+                with zipfile.ZipFile(io.BytesIO(zip_data), "r") as zf:
+                    names = zf.namelist()
+                    assert "regular.py" in names
+                    assert "test.sock" not in names
+                    assert len(names) == 1
+            finally:
+                sock.close()
+        finally:
+            shutil.rmtree(test_dir, ignore_errors=True)

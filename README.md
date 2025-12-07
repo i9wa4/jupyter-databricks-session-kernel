@@ -43,9 +43,9 @@ This kernel uses the [Databricks SDK for Python](https://docs.databricks.com/en/
 
 The authenticated user or service principal needs the following workspace permissions:
 
-- **Cluster access**: "Can Attach To" or "Can Restart" permission on the target cluster
-- **DBFS access**: Read/write access to `/tmp/` for file synchronization
-- **Workspace access**: Read/write access to `/Workspace/Users/{your-email}/` for code extraction
+- Cluster access: "Can Attach To" or "Can Restart" permission on the target cluster
+- DBFS access: Read/write access to `/tmp/` for file synchronization
+- Workspace access: Read/write access to `/Workspace/Users/{your-email}/` for code extraction
 
 Note: Databricks PATs inherit the permissions of the user who created them. For fine-grained access control, consider using [OAuth](https://docs.databricks.com/en/dev-tools/auth/oauth-m2m.html) or configure cluster access control lists.
 
@@ -67,35 +67,44 @@ databricks configure --token
 
 ### 4.4. Configuration File
 
-You can also set `cluster_id` in `.databricks-kernel.yaml`:
+You can configure the kernel in `pyproject.toml`:
 
-```yaml
-cluster_id: "0123-456789-abcdef12"
+```toml
+[tool.databricks-kernel]
+cluster_id = "0123-456789-abcdef12"
 ```
 
 For more authentication options including OAuth and SSO, see [Databricks SDK Authentication](https://docs.databricks.com/en/dev-tools/sdk-python.html#authentication).
 
 ## 5. File Synchronization
 
-This kernel synchronizes local files to DBFS for execution on the remote cluster. The synchronization behavior matches the [Databricks CLI](https://docs.databricks.com/en/dev-tools/cli/index.html).
+This kernel synchronizes local files to DBFS for execution on the remote cluster.
 
-### 5.1. Excluded Files
+### 5.1. Default Exclusions
 
-- `.gitignore` patterns: All patterns in your `.gitignore` file are respected
-- `.databricks` directory: Always excluded (matching Databricks CLI behavior)
+The `.databricks` directory is always excluded (matching Databricks CLI behavior).
 
-### 5.2. Custom Exclusions
+### 5.2. .gitignore Patterns
 
-You can add additional exclusion patterns in `.databricks-kernel.yaml`:
+By default, all patterns in your `.gitignore` file are respected (matching Databricks CLI behavior).
 
-```yaml
-sync:
-  exclude:
-    - "*.log"
-    - "data/"
+You can disable this behavior if needed:
+
+```toml
+[tool.databricks-kernel.sync]
+use_gitignore = false
 ```
 
-### 5.3. Size Limits
+### 5.3. Custom Exclusions
+
+You can add additional exclusion patterns:
+
+```toml
+[tool.databricks-kernel.sync]
+exclude = ["*.log", "data/"]
+```
+
+### 5.4. Size Limits
 
 You can configure file size limits to prevent syncing large files or projects:
 
@@ -106,17 +115,43 @@ You can configure file size limits to prevent syncing large files or projects:
 
 Example configuration:
 
-```yaml
-sync:
-  max_size_mb: 100.0
-  max_file_size_mb: 10.0
+```toml
+[tool.databricks-kernel.sync]
+max_size_mb = 100.0
+max_file_size_mb = 10.0
 ```
 
 If the size limit is exceeded, a `FileSizeError` is raised before syncing starts. The error message indicates which file or total size exceeded the limit, allowing you to adjust `exclude` patterns or increase the limit.
 
-## 6. Development
+### 5.5. Full Configuration Example
 
-### 6.1. Available Commands
+```toml
+[tool.databricks-kernel]
+cluster_id = "0123-456789-abcdef12"
+
+[tool.databricks-kernel.sync]
+enabled = true
+source = "."
+exclude = ["*.log", "data/", "*.tmp"]
+max_size_mb = 100.0
+max_file_size_mb = 10.0
+use_gitignore = true
+```
+
+## 6. Documentation
+
+For detailed documentation, see the [docs](./docs/) directory:
+
+- [Architecture](./docs/architecture.md) - Design overview and data flow
+- [Setup](./docs/setup.md) - Installation and configuration
+- [Usage](./docs/usage.md) - How to use the kernel
+- [Use Cases](./docs/use-cases.md) - Example scenarios and comparison
+- [Constraints](./docs/constraints.md) - Limitations and best practices
+- [Roadmap](./docs/roadmap.md) - Future plans
+
+## 7. Development
+
+### 7.1. Available Commands
 
 | Command | Description |
 |---------|-------------|
@@ -125,20 +160,22 @@ If the size limit is exceeded, a `FileSizeError` is raised before syncing starts
 | `make test` | Run tests |
 | `make jupyter` | Start JupyterLab |
 
-### 6.2. Code Quality
+### 7.2. Code Quality
 
 ```bash
 mise exec -- pre-commit run --all-files
 ```
 
-## 7. Databricks Runtime Compatibility
+## 8. Databricks Runtime Compatibility
 
 | Runtime | Python | Status |
 |---------|--------|--------|
-| 17.3 LTS | 3.12.3 | Recommended |
-| 16.4 LTS | 3.12.3 | Recommended |
-| 15.4 LTS | 3.11.11 | Supported |
+| [17.3 LTS](https://docs.databricks.com/aws/en/release-notes/runtime/17.3lts) | 3.12.3 | Recommended |
+| [16.4 LTS](https://docs.databricks.com/aws/en/release-notes/runtime/16.4lts) | 3.12.3 | Recommended |
+| [15.4 LTS](https://docs.databricks.com/aws/en/release-notes/runtime/15.4lts) | 3.11.11 | Supported |
 
-## 8. License
+For all supported runtimes, see [Databricks Runtime release notes](https://docs.databricks.com/aws/en/release-notes/runtime/).
+
+## 9. License
 
 Apache License 2.0
