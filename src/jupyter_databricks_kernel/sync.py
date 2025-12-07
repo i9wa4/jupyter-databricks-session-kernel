@@ -427,7 +427,9 @@ class FileSync:
 
             for filename in filenames:
                 file_path = root_path / filename
-                if not self._should_exclude(file_path, source_path):
+                if file_path.is_file() and not self._should_exclude(
+                    file_path, source_path
+                ):
                     files.append(file_path)
 
         return files
@@ -521,8 +523,9 @@ class FileSync:
             if files is not None:
                 # Use pre-computed file list (avoids duplicate os.walk)
                 for file_path in files:
-                    arcname = file_path.relative_to(source_path)
-                    zf.write(file_path, arcname)
+                    if file_path.is_file():
+                        arcname = file_path.relative_to(source_path)
+                        zf.write(file_path, arcname)
             else:
                 # Fallback: discover files via os.walk
                 for root, dirs, filenames in os.walk(source_path):
@@ -537,7 +540,9 @@ class FileSync:
 
                     for filename in filenames:
                         file_path = root_path / filename
-                        if not self._should_exclude(file_path, source_path):
+                        if file_path.is_file() and not self._should_exclude(
+                            file_path, source_path
+                        ):
                             arcname = file_path.relative_to(source_path)
                             zf.write(file_path, arcname)
 
