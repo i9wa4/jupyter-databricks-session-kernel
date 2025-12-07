@@ -752,3 +752,78 @@ class TestNeedsSyncIntegration:
 
         # Should detect modification and return True
         assert file_sync.needs_sync() is True
+
+
+class TestSkipNonRegularFiles:
+    """Tests for skipping non-regular files (sockets, FIFOs, etc.)."""
+
+    def test_get_all_files_skips_socket_files(self, mock_config: MagicMock) -> None:
+        """Test that _get_all_files skips socket files."""
+        import shutil
+        import socket
+        import tempfile
+
+        # Use /tmp directly to avoid AF_UNIX path length limit on macOS
+        test_dir = Path(tempfile.mkdtemp(prefix="sync_test_"))
+        try:
+            mock_config.sync.source = str(test_dir)
+            mock_config.sync.exclude = []
+            file_sync = FileSync(mock_config, "test-session")
+
+            # Create a regular file
+            regular_file = test_dir / "regular.py"
+            regular_file.write_text("print('hello')")
+
+            # Create a Unix socket file
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock_path = test_dir / "test.sock"
+            sock.bind(str(sock_path))
+            try:
+                # Get all files - socket should be skipped
+                files = file_sync._get_all_files()
+
+                assert regular_file in files
+                assert sock_path not in files
+                assert len(files) == 1
+            finally:
+                sock.close()
+        finally:
+            shutil.rmtree(test_dir, ignore_errors=True)
+
+    def test_create_zip_skips_socket_files(self, mock_config: MagicMock) -> None:
+        """Test that _create_zip skips socket files without error."""
+        import io
+        import shutil
+        import socket
+        import tempfile
+        import zipfile
+
+        # Use /tmp directly to avoid AF_UNIX path length limit on macOS
+        test_dir = Path(tempfile.mkdtemp(prefix="sync_test_"))
+        try:
+            mock_config.sync.source = str(test_dir)
+            mock_config.sync.exclude = []
+            file_sync = FileSync(mock_config, "test-session")
+
+            # Create a regular file
+            regular_file = test_dir / "regular.py"
+            regular_file.write_text("print('hello')")
+
+            # Create a Unix socket file
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock_path = test_dir / "test.sock"
+            sock.bind(str(sock_path))
+            try:
+                # Create zip - should not raise error
+                zip_data = file_sync._create_zip()
+
+                # Verify zip contains only regular file
+                with zipfile.ZipFile(io.BytesIO(zip_data), "r") as zf:
+                    names = zf.namelist()
+                    assert "regular.py" in names
+                    assert "test.sock" not in names
+                    assert len(names) == 1
+            finally:
+                sock.close()
+        finally:
+            shutil.rmtree(test_dir, ignore_errors=True)
