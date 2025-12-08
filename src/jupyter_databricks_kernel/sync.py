@@ -689,7 +689,10 @@ del _extract_dir, _dbfs_zip_path, _local_zip
 
         # Also clean up Workspace directory if user_name is known
         if self._user_name is not None:
-            workspace_dir = f"/Workspace/Users/{self._user_name}/jupyter_databricks_kernel/{self.session_id}"
+            workspace_dir = (
+                f"/Workspace/Users/{self._user_name}"
+                f"/jupyter_databricks_kernel/{self.session_id}"
+            )
             try:
                 client = self._ensure_client()
                 client.workspace.delete(workspace_dir, recursive=True)
