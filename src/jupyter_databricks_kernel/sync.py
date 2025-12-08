@@ -6,6 +6,7 @@ directory. When use_gitignore is enabled, .gitignore patterns are also applied.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import io
 import json
@@ -113,13 +114,16 @@ class FileCache:
         """Load cache from file after initialization."""
         self._load()
 
-    @property
+    @functools.cached_property
     def cache_path(self) -> Path:
         """Get the cache file path.
 
         Returns XDG-compliant cache path:
         $XDG_CACHE_HOME/jupyter-databricks-kernel/<project_hash>.json
         or ~/.cache/jupyter-databricks-kernel/<project_hash>.json
+
+        Note: This is a cached_property to avoid recalculating the hash
+        on every access. The source_path is immutable after initialization.
         """
         cache_dir = get_cache_dir()
         project_hash = get_project_hash(self.source_path)
