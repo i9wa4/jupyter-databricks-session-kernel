@@ -47,14 +47,20 @@ class ExecutionResult:
 class DatabricksExecutor:
     """Manages Databricks execution context and command execution."""
 
-    def __init__(self, config: Config) -> None:
+    def __init__(
+        self,
+        config: Config,
+        client: WorkspaceClient | None = None,
+    ) -> None:
         """Initialize the executor.
 
         Args:
             config: Kernel configuration.
+            client: Optional WorkspaceClient instance for dependency injection.
+                If not provided, a client will be created lazily when needed.
         """
         self.config = config
-        self.client: WorkspaceClient | None = None
+        self.client = client
         self.context_id: str | None = None
 
     def _ensure_client(self) -> WorkspaceClient:
