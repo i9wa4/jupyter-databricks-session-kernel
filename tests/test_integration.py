@@ -64,8 +64,7 @@ class TestRealClusterExecution:
         try:
             result = executor.execute("1 + 1")
             assert result.status == "ok"
-            # The output format may vary, just check we got something
-            assert result.output is not None or result.status == "ok"
+            assert result.output is not None
         finally:
             executor.destroy_context()
 
