@@ -37,6 +37,7 @@ CACHE_VERSION = 1
 DEFAULT_EXCLUDE_PATTERNS = [
     ".databricks",
     ".git",
+    ".venv",
     CACHE_FILE_NAME,  # Exclude legacy cache file in project root
 ]
 
