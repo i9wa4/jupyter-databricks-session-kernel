@@ -328,19 +328,35 @@ class TestProgressDisplay:
 
         mock_kernel._send_progress("RUNNING", "RUNNING", 1.0)
 
-        assert mock_kernel._progress_display_id == "active"
+        assert mock_kernel._progress_display_id is not None
+        assert mock_kernel._progress_display_id.startswith("progress-")
 
-    def test_send_progress_sends_clear_and_stream(
+    def test_send_progress_uses_display_data(
         self, mock_kernel: DatabricksKernel
     ) -> None:
-        """Test that _send_progress sends clear_output and stream messages."""
+        """Test that first _send_progress uses display_data with display_id."""
         mock_kernel._send_progress("RUNNING", "RUNNING", 1.0)
 
-        # Should send clear_output then stream
+        # First call should use display_data
         calls = mock_kernel.send_response.call_args_list
-        assert len(calls) == 2
-        assert calls[0][0][1] == "clear_output"
-        assert calls[1][0][1] == "stream"
+        assert len(calls) == 1
+        assert calls[0][0][1] == "display_data"
+        content = calls[0][0][2]
+        assert "transient" in content
+        assert "display_id" in content["transient"]
+
+    def test_send_progress_uses_update_display_data(
+        self, mock_kernel: DatabricksKernel
+    ) -> None:
+        """Test that subsequent _send_progress uses update_display_data."""
+        mock_kernel._send_progress("RUNNING", "RUNNING", 1.0)
+        mock_kernel.send_response.reset_mock()
+        mock_kernel._send_progress("RUNNING", "RUNNING", 2.0)
+
+        # Second call should use update_display_data
+        calls = mock_kernel.send_response.call_args_list
+        assert len(calls) == 1
+        assert calls[0][0][1] == "update_display_data"
 
     def test_send_progress_contains_spinner(
         self, mock_kernel: DatabricksKernel
@@ -350,63 +366,43 @@ class TestProgressDisplay:
 
         mock_kernel._send_progress("RUNNING", "RUNNING", 1.0)
 
-        # Get the stream call (second call after clear_output)
-        call_args = mock_kernel.send_response.call_args_list[1][0]
+        # Get the display_data call
+        call_args = mock_kernel.send_response.call_args_list[0][0]
         content = call_args[2]
-        text = content["text"]
+        text = content["data"]["text/plain"]
         assert any(char in text for char in SPINNER_CHARS)
 
     def test_send_progress_contains_status(self, mock_kernel: DatabricksKernel) -> None:
         """Test that progress message contains cluster and command status."""
         mock_kernel._send_progress("RUNNING", "QUEUED", 5.0)
 
-        # Get the stream call (second call after clear_output)
-        call_args = mock_kernel.send_response.call_args_list[1][0]
+        # Get the display_data call
+        call_args = mock_kernel.send_response.call_args_list[0][0]
         content = call_args[2]
-        text = content["text"]
+        text = content["data"]["text/plain"]
         assert "RUNNING" in text
         assert "QUEUED" in text
-        assert "5s" in text
+        assert "5.0s" in text  # Time < 10s shows 1 decimal place
 
-    def test_send_completion_clears_and_shows_message(
-        self, mock_kernel: DatabricksKernel
-    ) -> None:
-        """Test that _send_completion clears progress and shows completion."""
-        # First create a progress display
-        mock_kernel._send_progress("RUNNING", "RUNNING", 1.0)
-        mock_kernel.send_response.reset_mock()
-
-        mock_kernel._send_completion(5.5)
-
-        # Should send clear_output then stream
-        calls = mock_kernel.send_response.call_args_list
-        assert len(calls) == 2
-        assert calls[0][0][1] == "clear_output"
-        assert calls[1][0][1] == "stream"
-        text = calls[1][0][2]["text"]
-        assert "Completed" in text
+    def test_format_completion_text(self, mock_kernel: DatabricksKernel) -> None:
+        """Test that _format_completion_text formats correctly."""
+        text = mock_kernel._format_completion_text(5.5)
+        assert "Cell executed" in text
         assert "5.5s" in text
 
-    def test_send_completion_resets_state(self, mock_kernel: DatabricksKernel) -> None:
-        """Test that _send_completion resets progress state."""
-        mock_kernel._send_progress("RUNNING", "RUNNING", 1.0)
-        mock_kernel._send_completion(5.0)
-
-        assert mock_kernel._progress_display_id is None
-        assert mock_kernel._spinner_index == 0
-
-    def test_send_completion_without_display_id(
+    def test_format_completion_text_with_sync(
         self, mock_kernel: DatabricksKernel
     ) -> None:
-        """Test that _send_completion handles missing display_id gracefully."""
-        mock_kernel._progress_display_id = None
-
-        # Should not raise
-        mock_kernel._send_completion(5.0)
-
-        # State should still be reset
-        assert mock_kernel._progress_display_id is None
-        assert mock_kernel._spinner_index == 0
+        """Test that _format_completion_text includes sync info when set."""
+        # Set sync info (normally set by _sync_files)
+        mock_kernel._sync_info = "Synced 10 files in 2.5s"
+        text = mock_kernel._format_completion_text(3.0)
+        assert "Synced 10 files" in text
+        assert "2.5s" in text
+        assert "Cell executed" in text
+        assert "3.0s" in text
+        # Should have separator line
+        assert "─" in text
 
     def test_execute_sends_progress(self, mock_kernel: DatabricksKernel) -> None:
         """Test that execute sends progress during execution."""

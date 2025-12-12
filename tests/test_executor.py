@@ -449,7 +449,7 @@ class TestExecuteWithPolling:
         assert result.status == "ok"
         assert len(progress_calls) == 1
         assert progress_calls[0][0] == "RUNNING"
-        assert progress_calls[0][1] == "Finished"
+        assert progress_calls[0][1] == "FINISHED"
 
     def test_polls_until_finished(self, executor: DatabricksExecutor) -> None:
         """Test that polling continues until command finishes."""
@@ -502,10 +502,10 @@ class TestExecuteWithPolling:
         assert result.status == "ok"
         # Progress should have been called multiple times
         assert len(progress_calls) >= 3
-        # First calls should show Running status
-        assert progress_calls[0][1] == "Running"
-        # Last call should show Finished status
-        assert progress_calls[-1][1] == "Finished"
+        # First calls should show RUNNING status (uppercase)
+        assert progress_calls[0][1] == "RUNNING"
+        # Last call should show FINISHED status (uppercase)
+        assert progress_calls[-1][1] == "FINISHED"
 
     def test_execute_uses_polling_with_callback(
         self, executor: DatabricksExecutor

@@ -48,6 +48,8 @@ class DatabricksKernel(Kernel):
         self._spinner_index = 0
         self._progress_display_id: str | None = None
         self._driver_logs_url: str | None = None
+        # Track sync info for display during cell execution
+        self._sync_info: str | None = None
         logger.info("Kernel initialized: session_id=%s", self._session_id)
 
     def _initialize(self) -> bool:
@@ -90,22 +92,39 @@ class DatabricksKernel(Kernel):
     def _send_sync_progress(self, message: str) -> None:
         """Send sync progress update to the frontend with spinner animation.
 
+        Uses display_data with display_id for in-place updates.
+
         Args:
             message: Progress message to display.
         """
         spinner = SPINNER_CHARS[self._spinner_index % len(SPINNER_CHARS)]
         self._spinner_index += 1
 
-        self.send_response(
-            self.iopub_socket,
-            "clear_output",
-            {"wait": False},
-        )
-        self.send_response(
-            self.iopub_socket,
-            "stream",
-            {"name": "stderr", "text": f"{spinner} {message}\n"},
-        )
+        progress_text = f"{spinner} {message}"
+
+        # Use display_id for in-place updates (same as _send_progress)
+        # Include execution_count to make ID unique per cell execution
+        if not self._progress_display_id:
+            self._progress_display_id = f"progress-{self.execution_count}"
+            self.send_response(
+                self.iopub_socket,
+                "display_data",
+                {
+                    "data": {"text/plain": progress_text},
+                    "metadata": {},
+                    "transient": {"display_id": self._progress_display_id},
+                },
+            )
+        else:
+            self.send_response(
+                self.iopub_socket,
+                "update_display_data",
+                {
+                    "data": {"text/plain": progress_text},
+                    "metadata": {},
+                    "transient": {"display_id": self._progress_display_id},
+                },
+            )
 
     def _run_with_spinner(
         self,
@@ -215,6 +234,10 @@ class DatabricksKernel(Kernel):
             sync_elapsed = time.time() - sync_start
             logger.debug("File sync completed: %d files", stats.total_files)
 
+            # Store sync info for display during cell execution
+            sync_time_str = self._format_time(sync_elapsed)
+            self._sync_info = f"Synced {stats.total_files} files in {sync_time_str}"
+
             return True, sync_elapsed, stats.total_files
 
         except Exception as e:
@@ -279,7 +302,7 @@ class DatabricksKernel(Kernel):
     ) -> None:
         """Send progress update to the frontend.
 
-        Uses clear_output + stream for compatibility with VS Code and JupyterLab.
+        Uses display_data with transient flag so output is not persisted.
 
         Args:
             cluster_state: Current cluster state (e.g., "RUNNING").
@@ -293,29 +316,51 @@ class DatabricksKernel(Kernel):
         # Format elapsed time with 1 decimal for smooth animation feedback
         elapsed_str = f"{elapsed_seconds:.1f}s"
 
-        # Create progress message
-        progress_text = (
+        # Build progress message lines
+        lines = []
+
+        # Add sync info if available (first line)
+        if self._sync_info:
+            lines.append(f"✓ {self._sync_info}")
+
+        # Add execution progress (with spinner)
+        lines.append(
             f"{spinner} Cluster: {cluster_state} | "
             f"Command: {command_status} | {elapsed_str}"
         )
 
-        # Add driver logs URL on second line
+        # Add driver logs URL
         if self._driver_logs_url:
-            progress_text += f"\n  Driver logs: {self._driver_logs_url}"
+            lines.append(f"  Driver logs: {self._driver_logs_url}")
 
-        # Clear previous output and display new progress
-        # wait=False for immediate update (better animation)
-        self.send_response(
-            self.iopub_socket,
-            "clear_output",
-            {"wait": False},
-        )
-        self.send_response(
-            self.iopub_socket,
-            "stream",
-            {"name": "stderr", "text": f"{progress_text}\n"},
-        )
-        self._progress_display_id = "active"  # Mark that progress is being shown
+        progress_text = "\n".join(lines)
+
+        # Use display_id for in-place updates
+        # First call creates the display, subsequent calls update it
+        # Include execution_count to make ID unique per cell execution
+        if not self._progress_display_id:
+            self._progress_display_id = f"progress-{self.execution_count}"
+            # First display - create it
+            self.send_response(
+                self.iopub_socket,
+                "display_data",
+                {
+                    "data": {"text/plain": progress_text},
+                    "metadata": {},
+                    "transient": {"display_id": self._progress_display_id},
+                },
+            )
+        else:
+            # Update existing display
+            self.send_response(
+                self.iopub_socket,
+                "update_display_data",
+                {
+                    "data": {"text/plain": progress_text},
+                    "metadata": {},
+                    "transient": {"display_id": self._progress_display_id},
+                },
+            )
 
     def _format_time(self, seconds: float) -> str:
         """Format time in seconds to human-readable string.
@@ -330,51 +375,32 @@ class DatabricksKernel(Kernel):
             return f"{seconds:.1f}s"
         return f"{seconds:.0f}s"
 
-    def _send_completion(
+    def _format_completion_text(
         self,
         exec_seconds: float,
-        sync_seconds: float = 0.0,
-        sync_file_count: int = 0,
-    ) -> None:
-        """Send completion message to the frontend.
-
-        Clears progress display and shows completion message with separate
-        sync and execution times.
+    ) -> str:
+        """Format completion message text.
 
         Args:
             exec_seconds: Cell execution time in seconds.
-            sync_seconds: File sync time in seconds (0 if no sync).
-            sync_file_count: Number of files synced (0 if no sync).
+
+        Returns:
+            Formatted completion message string (multiple lines if sync occurred).
         """
-        # Build completion message
         lines = []
 
-        # Add sync line if sync occurred
-        if sync_seconds > 0:
-            sync_str = self._format_time(sync_seconds)
-            lines.append(f"✓ Synced {sync_file_count} files in {sync_str}")
+        # Add sync info if available
+        if self._sync_info:
+            lines.append(f"✓ {self._sync_info}")
 
-        # Add execution line
+        # Add execution time
         exec_str = self._format_time(exec_seconds)
         lines.append(f"✓ Cell executed in {exec_str}")
 
-        completion_text = "\n".join(lines)
+        # Add separator line to distinguish from output
+        lines.append("─" * 40)
 
-        # Clear progress and show completion message
-        self.send_response(
-            self.iopub_socket,
-            "clear_output",
-            {"wait": True},
-        )
-        self.send_response(
-            self.iopub_socket,
-            "stream",
-            {"name": "stderr", "text": f"{completion_text}\n"},
-        )
-
-        # Reset for next execution
-        self._progress_display_id = None
-        self._spinner_index = 0
+        return "\n".join(lines)
 
     async def do_execute(
         self,
@@ -441,10 +467,6 @@ class DatabricksKernel(Kernel):
             )
             exec_elapsed = time.time() - exec_start_time
 
-            # Send completion message with sync and execution times
-            if not silent and (self._progress_display_id or sync_elapsed > 0):
-                self._send_completion(exec_elapsed, sync_elapsed, sync_file_count)
-
             # Handle reconnection: re-run setup code and notify user
             if result.reconnected:
                 logger.debug("Execution triggered reconnection")
@@ -454,6 +476,22 @@ class DatabricksKernel(Kernel):
 
             if result.status == "ok":
                 if not silent:
+                    # Update progress display to show completion message
+                    if self._progress_display_id:
+                        completion_text = self._format_completion_text(exec_elapsed)
+                        self.send_response(
+                            self.iopub_socket,
+                            "update_display_data",
+                            {
+                                "data": {"text/plain": completion_text},
+                                "metadata": {},
+                                "transient": {"display_id": self._progress_display_id},
+                            },
+                        )
+                        self._progress_display_id = None
+                        self._spinner_index = 0
+                        self._sync_info = None  # Reset for next execution
+
                     # Display text output
                     if result.output:
                         self.send_response(

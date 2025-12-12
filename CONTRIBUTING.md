@@ -24,12 +24,12 @@ make sync
 
 ### 1.3. Available Commands
 
-| Command | Description |
-|---------|-------------|
-| `make install` | Install mise tools |
-| `make sync` | Sync Python dependencies with uv |
-| `make test` | Run tests |
-| `make jupyter` | Start JupyterLab |
+| Command        | Description                      |
+| ---------      | -------------                    |
+| `make install` | Install mise tools               |
+| `make sync`    | Sync Python dependencies with uv |
+| `make test`    | Run tests                        |
+| `make jupyter` | Start JupyterLab                 |
 
 ## 2. Project Structure
 
@@ -41,12 +41,12 @@ src/jupyter_databricks_kernel/
 └── config.py      # Configuration loading and validation
 ```
 
-| Module | Description |
-|--------|-------------|
-| kernel.py | Kernel lifecycle, file sync coordination, result formatting |
-| executor.py | Command Execution API, context management, reconnection |
-| sync.py | File collection, hash-based change detection, DBFS upload |
-| config.py | Environment variables, YAML config, validation |
+| Module      | Description                                                 |
+| --------    | -------------                                               |
+| kernel.py   | Kernel lifecycle, file sync coordination, result formatting |
+| executor.py | Command Execution API, context management, reconnection     |
+| sync.py     | File collection, hash-based change detection, DBFS upload   |
+| config.py   | Environment variables, YAML config, validation              |
 
 ## 3. Code Style
 
