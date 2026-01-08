@@ -15,9 +15,16 @@ repos:
 
   - repo: local
     hooks:
-      - id: gitleaks
-        name: gitleaks
-        entry: mise exec -- gitleaks protect --staged
+      - id: gitleaks-pre-commit
+        name: Detect hardcoded secrets (pre-commit)
+        entry: mise exec -- gitleaks protect --verbose --redact --staged
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: gitleaks-ci
+        name: Detect hardcoded secrets (CI)
+        entry: mise exec -- gitleaks detect --verbose --redact
         language: system
         pass_filenames: false
 
